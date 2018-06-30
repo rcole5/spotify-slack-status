@@ -1,0 +1,15 @@
+{
+  "port": "8080",
+  "emoji": ":spotify:",
+  "frequency": 15,
+  "spotify": {
+    "client_id": "",
+    "client_secret": "",
+    "redirect_uri": "http://localhost:8080/spotifycallback"
+  },
+  "slack": {
+    "client_id": "",
+    "client_secret": "",
+    "redirect_uri": "http://localhost:8080/slackcallback"
+  }
+}
