@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"github.com/nu7hatch/gouuid"
 	"os/signal"
+	"runtime"
+	"os/exec"
 )
 
 var (
@@ -80,11 +82,15 @@ func main() {
 		log.Fatal(err)
 	}
 
+	log.Println("Connected to Spotify!")
+
 	// Connect to slack
 	slackToken, err := slackLogin()
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	log.Println("Connected to Slack!")
 
 	// Create slack client
 	slackClient := slack.New(slackToken.AccessToken)
@@ -117,6 +123,7 @@ func main() {
 		}
 	}()
 
+	log.Println("Listening...")
 	// Keep listening until we die
 	for true {
 		// Get the current song
@@ -160,6 +167,7 @@ func main() {
 func slackLogin() (token *oauth2.Token, err error) {
 	// Prompt user to login
 	url := slackAuth.AuthURL(state)
+	openbrowser(url)
 	fmt.Println("Please log in to Spotify by visiting the following page in your browser:", url)
 
 	// Wait for the Slack auth to complete
@@ -188,6 +196,7 @@ func spotifyLogin() (client *spotify.Client, err error) {
 	spotifyAuth.SetAuthInfo(AppConfig.Spotify.ClientId, AppConfig.Spotify.ClientSecret)
 
 	url := spotifyAuth.AuthURL(state)
+	openbrowser(url)
 	fmt.Println("Please log in to Spotify by visiting the following page in your browser:", url)
 
 	// Wait for the Spotify auth to complete
@@ -268,4 +277,18 @@ func (a Authenticator) AuthURL(state string) string {
 type Authenticator struct {
 	config  *oauth2.Config
 	context context.Context
+}
+
+func openbrowser(url string) (err error){
+	switch runtime.GOOS {
+	case "linux":
+		err = exec.Command("xdg-open", url).Start()
+	case "windows":
+		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		err = exec.Command("open", url).Start()
+	default:
+		err = fmt.Errorf("unsupported platform")
+	}
+	return
 }
