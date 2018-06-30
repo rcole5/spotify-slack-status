@@ -145,6 +145,9 @@ func main() {
 
 			// Format the message and set the status
 			currentSong := "Listening to " + current.Item.Name + " by " + artistList
+			if len(currentSong) > 99 {
+				currentSong = currentSong[:97] + "..."
+			}
 			err = slackClient.SetUserCustomStatus(currentSong, AppConfig.Emoji)
 			if err != nil {
 				log.Fatal(err)
