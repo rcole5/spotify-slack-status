@@ -142,7 +142,6 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			log.Println("Status set!")
 		} else {
 			// Music has stopped
 			// Back to the defaults
@@ -238,6 +237,7 @@ func (a Authenticator) Token(state string, r *http.Request) (*oauth2.Token, erro
 	}
 	return a.config.Exchange(a.context, code)
 }
+
 // Create an authenticator which is used to implement the OAuth2 authorization flow.
 func NewSlackAuthenticator(scopes ...string) Authenticator {
 	cfg := &oauth2.Config{
