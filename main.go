@@ -129,6 +129,7 @@ func main() {
 		// Get the current song
 		current, err := spotifyClient.PlayerCurrentlyPlaying()
 		if err != nil {
+			slackClient.SetUserCustomStatus(DefaultMessage, DefaultEmoji)
 			log.Fatal(err)
 		}
 
@@ -150,6 +151,7 @@ func main() {
 			}
 			err = slackClient.SetUserCustomStatus(currentSong, AppConfig.Emoji)
 			if err != nil {
+				slackClient.SetUserCustomStatus(DefaultMessage, DefaultEmoji)
 				log.Fatal(err)
 			}
 		} else {
@@ -157,6 +159,7 @@ func main() {
 			// Back to the defaults
 			err = slackClient.SetUserCustomStatus(DefaultMessage, DefaultEmoji)
 			if err != nil {
+				slackClient.SetUserCustomStatus(DefaultMessage, DefaultEmoji)
 				log.Fatal(err)
 			}
 		}
