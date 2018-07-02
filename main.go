@@ -26,8 +26,7 @@ var (
 	ch             = make(chan *spotify.Client)
 	slackCh        = make(chan *oauth2.Token)
 	state          string
-	DefaultMessage string
-	DefaultEmoji   string
+	DefaultImage   string
 	AppConfig      Config
 )
 
@@ -45,6 +44,13 @@ type Config struct {
 	Slack     ConfigRecord  `json:"slack"`
 }
 
+type Session struct {
+	SlackClient   *slack.Client
+	SpotifyClient *spotify.Client
+	DefaultMessage string
+	DefaultEmoji string
+}
+
 func main() {
 	// Load the config file
 	file, err := os.Open("./config.json")
@@ -58,7 +64,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-
 	// Start http server to handle callbacks
 	http.HandleFunc("/spotifycallback", completeSpotifyAuth)
 	http.HandleFunc("/slackcallback", completeSlackAuth)
@@ -69,17 +74,114 @@ func main() {
 	spotifyAuth = spotify.NewAuthenticator(AppConfig.Spotify.RedirectUri, spotify.ScopeUserReadPrivate, spotify.ScopeUserReadCurrentlyPlaying)
 	slackAuth = NewSlackAuthenticator("users.profile:write", "users.profile:read", "users:read")
 
-
 	// Generate oauth state
 	state, err = GenerateStateToken()
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	session, err := getClients()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Get the user id
+	slackAuthTest, err := session.SlackClient.AuthTest()
+	if err != nil {
+		log.Fatal(err)
+	}
+	userId := slackAuthTest.UserID
+
+	// Get default message and emoji
+	user, err := session.SlackClient.GetUserProfile(userId, false)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	session.DefaultMessage = user.StatusText
+	session.DefaultEmoji = user.StatusEmoji
+	//DefaultImage = user.ImageOriginal
+
+	// If we die then the status will be whatever we were last listening to
+	// This captures the interrupt signal and resets the status
+	killSig := make(chan os.Signal, 1)
+	signal.Notify(killSig, os.Interrupt)
+	signal.Notify(killSig, os.Kill)
+	go func() {
+		for range killSig {
+			session.resetAndExit()
+		}
+	}()
+
+	log.Println("Listening...")
+	wasPlaying := false
+	lastSong := spotify.CurrentlyPlaying{}
+	// Keep listening until we die
+	for true {
+		// Get the current song
+		current, err := session.SpotifyClient.PlayerCurrentlyPlaying()
+		if err != nil {
+			session.resetAndFatal(err)
+		}
+
+		// Set status if currently player. Otherwise set it back to the original
+		if current.Playing {
+			// Check if song is the same
+			if !wasPlaying || lastSong.Item.ID != current.Item.ID {
+				// Format user list
+				var artistList string
+				for _, artist := range current.Item.Artists {
+					artistList = artistList + ", " + artist.Name
+				}
+
+				// Trim the leading comma & trim the whitespace
+				artistList = strings.TrimSpace(artistList[1:])
+
+				// Format the message and set the status
+				currentSong := "Listening to " + current.Item.Name + " by " + artistList
+				if len(currentSong) > 99 {
+					currentSong = currentSong[:97] + "..."
+				}
+				err = session.SlackClient.SetUserCustomStatus(currentSong, AppConfig.Emoji)
+				//err = slackClient.SetUserPhoto(current.Item.Album.Images[0].URL, slack.UserSetPhotoParams{})
+				if err != nil {
+					// Just skip the update if we're rate limited
+					if err.Error() != "rate_limited" {
+						session.resetAndFatal(err)
+					}
+					continue
+				}
+				// We do this last to ensure the new status is set before we update these vars
+				lastSong = *current
+				wasPlaying = true
+			}
+		} else {
+			// Music has stopped
+			// No need to update if we 
+			if wasPlaying {
+				// Back to the defaults
+				err = session.SlackClient.SetUserCustomStatus(session.DefaultMessage, session.DefaultEmoji)
+				if err != nil {
+					// Just skip the update if we're rate limited
+					if err.Error() != "rate_limited" {
+						session.resetAndFatal(err)
+					}
+				}
+				wasPlaying = false
+			}
+		}
+		// Time to chill
+		// We don't want to poll too often
+		time.Sleep(AppConfig.Frequency * time.Second)
+	}
+}
+
+// Login to Spotify & Slack then return the clients
+func getClients() (session *Session, err error) {
 	// Connect to Spotify
 	spotifyClient, err := spotifyLogin()
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 
 	log.Println("Connected to Spotify!")
@@ -87,7 +189,7 @@ func main() {
 	// Connect to slack
 	slackToken, err := slackLogin()
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 
 	log.Println("Connected to Slack!")
@@ -95,78 +197,23 @@ func main() {
 	// Create slack client
 	slackClient := slack.New(slackToken.AccessToken)
 
-	// Get the user id
-	slackAuthTest, err := slackClient.AuthTest()
-	if err != nil {
-		log.Fatal(err)
+	session = &Session{
+		SpotifyClient: spotifyClient,
+		SlackClient:   slackClient,
 	}
-	userId := slackAuthTest.UserID
+	return
+}
 
-	// Get default message and emoji
-	user, err := slackClient.GetUserProfile(userId, false)
-	if err != nil {
-		log.Fatal(err)
-	}
+// Reset the message back to default & return a fatal.
+func (s *Session) resetAndFatal(err error) {
+	s.SlackClient.SetUserCustomStatus(s.DefaultMessage, s.DefaultEmoji)
+	log.Fatal(err)
+}
 
-	DefaultMessage = user.StatusText
-	DefaultEmoji = user.StatusEmoji
-
-	// If we die then the status will be whatever we were last listening to
-	// This captures the interrupt signal and resets the status
-	killSig := make(chan os.Signal, 1)
-	signal.Notify(killSig, os.Interrupt)
-	signal.Notify(killSig, os.Kill)
-	go func(){
-		for range killSig {
-			err = slackClient.SetUserCustomStatus(DefaultMessage, DefaultEmoji)
-			os.Exit(1)
-		}
-	}()
-
-	log.Println("Listening...")
-	// Keep listening until we die
-	for true {
-		// Get the current song
-		current, err := spotifyClient.PlayerCurrentlyPlaying()
-		if err != nil {
-			slackClient.SetUserCustomStatus(DefaultMessage, DefaultEmoji)
-			log.Fatal(err)
-		}
-
-		// Set status if currently player. Otherwise set it back to the original
-		if current.Playing {
-			// Format user list
-			var artistList string
-			for _, artist := range current.Item.Artists {
-				artistList = artistList + ", " + artist.Name
-			}
-
-			// Trim the leading comma & trim the whitespace
-			artistList = strings.TrimSpace(artistList[1:])
-
-			// Format the message and set the status
-			currentSong := "Listening to " + current.Item.Name + " by " + artistList
-			if len(currentSong) > 99 {
-				currentSong = currentSong[:97] + "..."
-			}
-			err = slackClient.SetUserCustomStatus(currentSong, AppConfig.Emoji)
-			if err != nil {
-				slackClient.SetUserCustomStatus(DefaultMessage, DefaultEmoji)
-				log.Fatal(err)
-			}
-		} else {
-			// Music has stopped
-			// Back to the defaults
-			err = slackClient.SetUserCustomStatus(DefaultMessage, DefaultEmoji)
-			if err != nil {
-				slackClient.SetUserCustomStatus(DefaultMessage, DefaultEmoji)
-				log.Fatal(err)
-			}
-		}
-		// Time to chill
-		// We don't want to poll too often
-		time.Sleep(AppConfig.Frequency * time.Second)
-	}
+// Return the message back to default & exit.
+func (s *Session) resetAndExit() {
+	s.SlackClient.SetUserCustomStatus(s.DefaultMessage, s.DefaultEmoji)
+	os.Exit(1)
 }
 
 // Start the Slack OAuth login flow.
@@ -285,7 +332,7 @@ type Authenticator struct {
 	context context.Context
 }
 
-func openbrowser(url string) (err error){
+func openbrowser(url string) (err error) {
 	switch runtime.GOOS {
 	case "linux":
 		err = exec.Command("xdg-open", url).Start()
