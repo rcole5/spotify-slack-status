@@ -121,6 +121,12 @@ func main() {
 		// Get the current song
 		current, err := session.SpotifyClient.PlayerCurrentlyPlaying()
 		if err != nil {
+			// When Spotify is in private mode it sends a response that the library can handle
+			// This is a temporary work around
+			if err.Error() == "EOF" {
+				time.Sleep(AppConfig.Frequency * time.Second)
+				continue
+			}
 			session.resetAndFatal(err)
 		}
 
@@ -206,8 +212,8 @@ func getClients() (session *Session, err error) {
 
 // Reset the message back to default & return a fatal.
 func (s *Session) resetAndFatal(err error) {
-	s.SlackClient.SetUserCustomStatus(s.DefaultMessage, s.DefaultEmoji)
-	log.Fatal(err)
+	_ = s.SlackClient.SetUserCustomStatus(s.DefaultMessage, s.DefaultEmoji)
+	log.Fatal(err.Error())
 }
 
 // Return the message back to default & exit.
@@ -233,11 +239,9 @@ func completeSlackAuth(w http.ResponseWriter, r *http.Request) {
 	tok, err := slackAuth.Token(state, r)
 	if err != nil {
 		http.Error(w, "Couldn't get token", http.StatusForbidden)
-		log.Fatal(err)
 	}
 	if st := r.FormValue("state"); st != state {
 		http.NotFound(w, r)
-		log.Fatalf("State mismatch: %s != %s\n", st, state)
 	}
 
 	// Send the token
@@ -262,11 +266,9 @@ func completeSpotifyAuth(w http.ResponseWriter, r *http.Request) {
 	tok, err := spotifyAuth.Token(state, r)
 	if err != nil {
 		http.Error(w, "Couldn't get token", http.StatusForbidden)
-		log.Fatal(err)
 	}
 	if st := r.FormValue("state"); st != state {
 		http.NotFound(w, r)
-		log.Fatalf("State mismatch: %s != %s\n", st, state)
 	}
 
 	// use the token to get an authenticated client
