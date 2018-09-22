@@ -116,15 +116,18 @@ func main() {
 	log.Println("Listening...")
 	wasPlaying := false
 	lastSong := spotify.CurrentlyPlaying{}
+
+	// Create a ticker so we don't poll too often
+	ticker := time.NewTicker(AppConfig.Frequency * time.Second)
+
 	// Keep listening until we die
-	for true {
+	for range ticker.C {
 		// Get the current song
 		current, err := session.SpotifyClient.PlayerCurrentlyPlaying()
 		if err != nil {
 			// When Spotify is in private mode it sends a response that the library can handle
 			// This is a temporary work around
 			if err.Error() == "EOF" {
-				time.Sleep(AppConfig.Frequency * time.Second)
 				continue
 			}
 			session.resetAndFatal(err)
@@ -176,9 +179,6 @@ func main() {
 				wasPlaying = false
 			}
 		}
-		// Time to chill
-		// We don't want to poll too often
-		time.Sleep(AppConfig.Frequency * time.Second)
 	}
 }
 
